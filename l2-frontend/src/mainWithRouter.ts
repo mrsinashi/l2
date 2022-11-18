@@ -632,6 +632,18 @@ const router = new Router({
       redirect: (to) => ({ name: '404', hash: to.fullPath }),
       meta: {},
     },
+    {
+      path: '/ui/equeue',
+      name: 'equeue',
+      component: () => import('@/pages/eQueue.vue'),
+      meta: {
+        title: '"Электронная очередь"',
+        narrowLayout: true,
+        groups: [
+          'Оператор электронной очереди',
+        ],
+      },
+    },
   ],
 });
 

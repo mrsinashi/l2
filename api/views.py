@@ -2624,3 +2624,9 @@ def update_company(request):
             {"company_data": Company.as_json(company_data)},
         )
         return JsonResponse({'ok': True})
+
+
+@login_required
+@group_required('Оператор электронной очереди')
+def equeues(request):
+    return JsonResponse({"ok": "ok"})
