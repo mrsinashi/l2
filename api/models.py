@@ -146,3 +146,15 @@ class RelationCultureASTM(models.Model):
     class Meta:
         verbose_name = 'Связь ASTM и культур'
         verbose_name_plural = 'Связи ASTM и культур'
+
+
+class ProfilesToAnalyzers(models.Model):
+    profile = models.ForeignKey('users.DoctorProfile', on_delete=models.CASCADE, db_index=True)
+    analyzer = models.ForeignKey(Analyzer, on_delete=models.CASCADE, db_index=True)
+    
+    def __str__(self):
+        return f"Пользователь: {self.profile}, анализатор {self.analyzer}"
+
+    class Meta:
+        verbose_name = 'Связь профилей и анализаторов'
+        verbose_name_plural = 'Связи профилей и анализаторов'

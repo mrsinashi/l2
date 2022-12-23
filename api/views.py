@@ -79,6 +79,8 @@ from .directions.sql_func import get_lab_podr
 from .sql_func import users_by_group, users_all, get_diagnoses, get_resource_researches, search_data_by_param, search_text_stationar
 from laboratory.settings import URL_RMIS_AUTH, URL_ELN_MADE, URL_SCHEDULE
 import urllib.parse
+from api.dicom import check_server_port
+from requests import post
 
 
 logger = logging.getLogger("API")
@@ -2624,3 +2626,39 @@ def update_company(request):
             {"company_data": Company.as_json(company_data)},
         )
         return JsonResponse({'ok': True})
+
+
+try:
+    from laboratory.local_settings import LABORATORY_SERVER_IP, LABORATORY_SERVER_PORT, LABORATORY_SERVER_APIKEY
+except ImportError:
+    pass
+
+
+@login_required
+@group_required('Анализаторы')
+def reboot_analyzer(request):
+    #available = check_server_port(LABORATORY_SERVER_IP, LABORATORY_SERVER_PORT)
+    analyzer_name = json.loads(request.body)
+    
+    #if not available:
+    #   return JsonResponse({'ok': False})
+    
+    headers = {'Content-Type': 'application/json'}
+    data = {'service-name': str(request.body), 'action': 'restart', 'api_key': LABORATORY_SERVER_APIKEY}
+    post(f'http://{LABORATORY_SERVER_IP}:{LABORATORY_SERVER_PORT}', headers=headers, data=json.dumps(data))
+    
+    return JsonResponse({'ok': True})
+
+
+@login_required
+@group_required('Анализаторы')
+def get_analyzers(request):
+    doctor = users.DoctorProfile.objects.get(user_id=request.user.pk)
+    analyzers_list = [
+        {
+            "pk": item.analyzer.pk,
+            "title": item.analyzer.title
+        }
+        for item in models.ProfilesToAnalyzers.objects.filter(profile_id=doctor.pk)
+    ]
+    return JsonResponse({'data': analyzers_list})

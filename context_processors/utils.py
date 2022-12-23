@@ -191,6 +191,7 @@ def menu(request):
                     "module": "l2_send_orgs_email_results",
                 },
                 {"url": "/ui/utils", "title": "Инструменты", "nt": False, "access": []},
+                {"url": "/ui/reboot-laboratory", "title": "Перезагрузка анализаторов", "nt": False, "access": []},
             ]
 
             hp = SettingManager.get(key="home_page", default="false")

@@ -632,6 +632,18 @@ const router = new Router({
       redirect: (to) => ({ name: '404', hash: to.fullPath }),
       meta: {},
     },
+    {
+      path: '/ui/reboot-laboratory',
+      name: 'rebootlab',
+      component: () => import('@/pages/RebootLaboratory.vue'),
+      meta: {
+        title: '"Перезагрузка анализаторов"',
+        narrowLayout: true,
+        groups: [
+          'Анализаторы',
+        ],
+      },
+    },
   ],
 });
 

@@ -106,4 +106,6 @@ urlpatterns = [
     path('get-contract-list', views.get_contract_list),
     path('get-company', views.get_company),
     path('update-company', views.update_company),
+    path('get-analyzers', views.get_analyzers),
+    path('reboot-analyzer', views.reboot_analyzer)
 ]
