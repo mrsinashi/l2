@@ -41,11 +41,11 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 import api.models as models
 import directions.models as directions
 import users.models as users
-from contracts.models import Company, PriceCategory, PriceName, PriceCoast, Contract
+from contracts.models import Company, PriceCategory, PriceName, PriceCoast, Contract, CompanyDepartment
 from api import fias
 from appconf.manager import SettingManager
 from barcodes.views import tubes
-from clients.models import CardBase, Individual, Card, Document, District
+from clients.models import CardBase, Individual, Card, Document, District, HarmfulFactor
 from context_processors.utils import menu
 from directory.models import (
     Fractions,
@@ -986,6 +986,12 @@ def companies_find(request):
     q = (request.GET.get("query", '') or '').strip()
     companies_data = Company.search_company(q)
     return JsonResponse({"data": companies_data})
+
+
+def company_departments_find(request):
+    request_data = json.loads(request.body)
+    company_departments = CompanyDepartment.search_departments(request_data['company_db'])
+    return JsonResponse({"data": company_departments})
 
 
 @login_required
@@ -2047,6 +2053,7 @@ def construct_menu_data(request):
         {"url": "/ui/construct/district", "title": "Участки организации", "access": ["Конструктор: Настройка организации"], "module": None},
         {"url": "/ui/construct/price", "title": "Настройка прайсов", "access": ["Конструктор: Настройка организации"], "module": None},
         {"url": "/ui/construct/company", "title": "Настройка компаний", "access": ["Конструктор: Настройка организации"], "module": None},
+        {"url": "/ui/construct/harmful-factor", "title": "Факторы вредности", "access": ["Конструктор: Факторы вредности"], "module": None},
     ]
 
     from context_processors.utils import make_menu
@@ -2440,7 +2447,14 @@ def update_coast_research_in_price(request):
 @group_required('Конструктор: Настройка организации')
 def get_research_list(request):
     researches = Researches.objects.filter(hide=False)
-    res_list = {"Лаборатория": {}, "Параклиника": {}, "Консультации": {"Общие": []}, "Формы": {"Общие": []}, "Морфология": {"Микробиология": [], "Гистология": [], "Цитология": []}}
+    res_list = {
+        "Лаборатория": {},
+        "Параклиника": {},
+        "Консультации": {"Общие": []},
+        "Формы": {"Общие": []},
+        "Морфология": {"Микробиология": [], "Гистология": [], "Цитология": []},
+        "Стоматология": {"Общие": []},
+    }
     lab_podr = get_lab_podr()
     lab_podr = [podr[0] for podr in lab_podr]
     for research in researches:
@@ -2457,6 +2471,13 @@ def get_research_list(request):
             res_list["Морфология"]["Гистология"].append({"id": research.pk, "label": research.title})
         elif research.is_microbiology:
             res_list["Морфология"]["Микробиология"].append({"id": research.pk, "label": research.title})
+        elif research.is_stom:
+            if research.site_type is None:
+                res_list["Стоматология"]["Общие"].append({"id": research.pk, "label": research.title})
+            elif not res_list["Стоматология"].get(research.site_type.title):
+                res_list["Стоматология"][research.site_type.title] = [{"id": research.pk, "label": research.title}]
+            else:
+                res_list["Стоматология"][research.site_type.title].append({"id": research.pk, "label": research.title})
         elif research.is_form:
             if research.site_type is None:
                 res_list["Формы"]["Общие"].append({"id": research.pk, "label": research.title})
@@ -2538,7 +2559,7 @@ def delete_research_in_price(request):
 
 @login_required
 @group_required('Конструктор: Настройка организации')
-def get_company_list(request):
+def get_companies(request):
     company_data = [
         {
             "pk": company.pk,
@@ -2551,7 +2572,7 @@ def get_company_list(request):
 
 @login_required
 @group_required('Конструктор: Настройка организации')
-def get_contract_list(request):
+def get_contracts(request):
     contract_data = [
         {
             "value": contract.pk,
@@ -2567,7 +2588,7 @@ def get_contract_list(request):
 def get_company(request):
     request_data = json.loads(request.body)
     company = Company.objects.get(pk=request_data["pk"])
-    company_data = Company.as_json(company=company)
+    company_data = Company.as_json(company)
     if company_data["contractId"]:
         company_data["contractData"] = {"value": company.contract.pk, "label": company.contract.title}
     return JsonResponse({"data": company_data})
@@ -2662,3 +2683,122 @@ def get_analyzers(request):
         for item in models.ProfilesToAnalyzers.objects.filter(profile_id=doctor.pk)
     ]
     return JsonResponse({'data': analyzers_list})
+def update_department(request):
+    request_data = json.loads(request.body)
+    if len(request_data["label"]) == 0:
+        return JsonResponse({"ok": False, "message": "Название не заполнено"})
+    if CompanyDepartment.objects.filter(title=request_data["label"]).exclude(pk=request_data["id"]):
+        return JsonResponse({"ok": False, "message": "Такое название уже есть"})
+    department = CompanyDepartment.objects.get(pk=request_data["id"])
+    department.title = request_data["label"]
+    department.save()
+    Log.log(
+        department.pk,
+        130005,
+        request.user.doctorprofile,
+        {"department": department.title, "company_id": department.company_id},
+    )
+    return JsonResponse({'ok': True})
+
+
+def add_department(request):
+    request_data = json.loads(request.body)
+    if len(request_data["department"]) == 0:
+        return JsonResponse({"ok": False, "message": "Название не заполнено"})
+    if CompanyDepartment.objects.filter(title=request_data["department"]):
+        return JsonResponse({"ok": False, "message": "Такое название уже есть"})
+    if not Company.objects.get(pk=request_data["company_id"]):
+        return JsonResponse({"ok": False, "message": "Нет такой компании"})
+    department = CompanyDepartment(title=request_data["department"], hide=False, company_id=request_data["company_id"])
+    department.save()
+    Log.log(
+        department.pk,
+        130004,
+        request.user.doctorprofile,
+        {"department": department.title, "company_id": department.company_id},
+    )
+    return JsonResponse({'ok': True})
+
+
+def get_harmful_factors(request):
+    rows = [
+        {
+            "id": factor.pk,
+            "label": f"{factor.title} - шаблон {factor.template.title}",
+            "title": factor.title,
+            "description": factor.description,
+            "template_id": factor.template_id,
+        }
+        for factor in HarmfulFactor.objects.all().order_by('title')
+    ]
+    return JsonResponse(rows, safe=False)
+
+
+def get_template_researches_pks(request):
+    request_data = json.loads(request.body)
+    template_pks = HarmfulFactor.get_template_by_factor(request_data['harmful_factor_pks'])
+    rows = users.AssignmentResearches.get_researches_by_template(template_pks)
+    return JsonResponse(rows, safe=False)
+
+
+def get_templates(request):
+    template_data = [{"id": template.pk, "label": template.title} for template in users.AssignmentTemplates.objects.all().order_by('title')]
+    return JsonResponse({"data": template_data})
+
+
+@login_required
+@group_required('Конструктор: Факторы вредности')
+def update_factor(request):
+    request_data = json.loads(request.body)
+    result = {"ok": True}
+    if not re.fullmatch('^[0-9.]+$', request_data["title"]):
+        result["ok"] = False
+        result["message"] = "Название не соответствует правилам"
+    elif not HarmfulFactor.objects.filter(pk=request_data["id"]).exists():
+        result["ok"] = False
+        result["message"] = "Нет такого фактора"
+    elif not users.AssignmentTemplates.objects.filter(pk=request_data["template_id"]).exists():
+        result["ok"] = False
+        result["message"] = "Нет такого шаблона"
+    elif HarmfulFactor.objects.filter(title=request_data["title"]).exclude(pk=request_data["id"]).exists():
+        result["ok"] = False
+        result["message"] = "Такое название уже есть"
+    if result["ok"]:
+        factor = HarmfulFactor.objects.get(pk=request_data["id"])
+        factor.title = request_data["title"]
+        factor.description = request_data["description"]
+        factor.template_id = request_data["template_id"]
+        factor.save()
+        Log.log(
+            factor.pk,
+            150000,
+            request.user.doctorprofile,
+            {"factor": factor.as_json(factor)},
+        )
+    return JsonResponse(result)
+
+
+@login_required
+@group_required('Конструктор: Факторы вредности')
+def add_factor(request):
+    request_data = json.loads(request.body)
+    result = {"ok": True}
+    if not re.fullmatch('^[0-9.]+$', request_data["title"]):
+        result["ok"] = False
+        result["message"] = "Название не соответствует правилам"
+    elif not users.AssignmentTemplates.objects.filter(pk=request_data["templateId"]).exists():
+        result["ok"] = False
+        result["message"] = "Нет такого шаблона"
+    elif HarmfulFactor.objects.filter(title=request_data["title"]).exists():
+        result["ok"] = False
+        result["message"] = "Такое название уже есть"
+    if result["ok"]:
+        factor = HarmfulFactor(title=request_data["title"], description=request_data["description"], template_id=request_data["templateId"])
+        factor.save()
+        Log.log(
+            factor.pk,
+            150001,
+            request.user.doctorprofile,
+            {"factor": factor.as_json(factor)},
+        )
+    return JsonResponse(result)

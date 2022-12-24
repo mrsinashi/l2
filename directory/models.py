@@ -275,6 +275,7 @@ class Researches(models.Model):
     oid_kind = models.CharField(max_length=5, null=True, blank=True, default="", help_text="oid-документа 1.2.643.5.1.13.13.11.1520")
     uet_refferal_doc = models.FloatField(default=0, verbose_name='УЕТы врача', blank=True)
     uet_refferal_co_executor_1 = models.FloatField(default=0, verbose_name='УЕТы со-исполнителя 1', blank=True)
+    print_additional_page_direction = models.CharField(max_length=255, default="", blank=True, verbose_name="Дополнительные формы при печати направления услуги")
 
     @staticmethod
     def filter_type(t):
@@ -346,6 +347,7 @@ class Researches(models.Model):
             "isParaclinic": self.is_paraclinic,
             "isForm": self.is_form,
             "isDeathCertificate": self.pk == DEATH_RESEARCH_PK,
+            "isDischarge": self.is_extract,
         }
 
     @property

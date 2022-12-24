@@ -23,7 +23,7 @@ from clients.sql_func import last_result_researches_years
 from directory.models import Researches, ScreeningPlan, PatientControlParam
 
 from laboratory.utils import localtime, current_year, strfdatetime
-from users.models import Speciality, DoctorProfile
+from users.models import Speciality, DoctorProfile, AssignmentTemplates
 from django.contrib.postgres.fields import ArrayField
 
 from utils.common import get_system_name
@@ -642,6 +642,7 @@ class Individual(models.Model):
         patronymic = data.get('patronymic', '').title().strip()
         gender = data.get('gender', '').lower().strip()
         bdate = data.get('birthdate', '').split(' ')[0]
+        insurer_full_code = data.get('insurer_full_code', '')
 
         if gender == 'm':
             gender = 'м'
@@ -698,7 +699,7 @@ class Individual(models.Model):
                 ce = Card.objects.filter(individual=i, base__internal_type=True).first()
                 if no_update and ce:
                     print('No update')  # noqa: T001
-                    polis = i.add_or_update_doc(enp_type, '', enp)
+                    polis = i.add_or_update_doc(enp_type, '', enp, insurer_full_code)
                     if polis:
                         cdu = CardDocUsage.objects.filter(card=ce, document__document_type=polis.document_type)
                         if not cdu.exists():
@@ -767,7 +768,7 @@ class Individual(models.Model):
             enp_doc = None
             if enp_type and enp:
                 print('Sync ENP')  # noqa: T001
-                enp_doc = i.add_or_update_doc(enp_type, '', enp)
+                enp_doc = i.add_or_update_doc(enp_type, '', enp, insurer_full_code)
 
             print('Sync L2 card')  # noqa: T001
             card = Card.add_l2_card(individual=i, polis=enp_doc, address=address, force=True, updated_data=updated_data)
@@ -786,14 +787,14 @@ class Individual(models.Model):
 
         return updated_data
 
-    def add_or_update_doc(self, doc_type: 'DocumentType', serial: str, number: str):
+    def add_or_update_doc(self, doc_type: 'DocumentType', serial: str, number: str, insurer_full_code=""):
         ds = Document.objects.filter(individual=self, document_type=doc_type, is_active=True)
         if ds.count() > 1:
             ds.delete()
 
         ds = Document.objects.filter(individual=self, document_type=doc_type, is_active=True)
         if ds.count() == 0:
-            d = Document(individual=self, document_type=doc_type, serial=serial, number=number)
+            d = Document(individual=self, document_type=doc_type, serial=serial, number=number, insurer_full_code=insurer_full_code)
             d.save()
         else:
             d: Document = ds.first()
@@ -806,6 +807,9 @@ class Individual(models.Model):
             if d.number != number:
                 d.number = number
                 updated.append('number')
+            if d.insurer_full_code != insurer_full_code:
+                d.insurer_full_code = insurer_full_code
+                updated.append('insurer_full_code')
 
             if updated:
                 d.save(update_fields=updated)
@@ -851,6 +855,7 @@ class Document(models.Model):
     who_give = models.TextField(default="", blank=True, help_text="Кто выдал")
     from_rmis = models.BooleanField(default=True, blank=True)
     rmis_uid = models.CharField(max_length=11, default=None, blank=True, null=True)
+    insurer_full_code = models.CharField(max_length=11, default="", blank=True, null=True, help_text="Код страховой")
 
     @property
     def date_start_local(self):
@@ -870,7 +875,7 @@ class Document(models.Model):
         """
         documents = {
             'passport': {'num': "", 'serial': "", 'date_start': "", 'issued': ""},
-            'polis': {'serial': "", 'num': "", 'issued': ""},
+            'polis': {'serial': "", 'num': "", 'issued': "", "insurer_full_code": ""},
             'snils': {'num': ""},
             'bc': {'num': "", 'serial': "", 'date_start': "", 'issued': ""},
         }
@@ -890,6 +895,7 @@ class Document(models.Model):
                 documents["polis"]["serial"] = d.serial
                 documents["polis"]["date_start"] = "" if not d.date_start else d.date_start.strftime("%d.%m.%Y")
                 documents["polis"]["issued"] = d.who_give
+                documents["polis"]["insurer_full_code"] = d.insurer_full_code
 
             if d.document_type.title == 'Свидетельство о рождении':
                 documents["bc"]["num"] = d.number
@@ -998,6 +1004,31 @@ class District(models.Model):
         verbose_name_plural = 'Участки'
 
 
+class HarmfulFactor(models.Model):
+    title = models.CharField(max_length=255, help_text='Наименование')
+    description = models.CharField(max_length=255, help_text='Описание', blank=True, default=None, null=True)
+    template = models.ForeignKey(AssignmentTemplates, db_index=True, null=True, blank=True, default=None, on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = 'Фактор вредности'
+        verbose_name_plural = 'Факторы вредности'
+
+    @staticmethod
+    def get_template_by_factor(factor_pks):
+        factors = HarmfulFactor.objects.filter(pk__in=factor_pks)
+        return [i.template.pk for i in factors]
+
+    @staticmethod
+    def as_json(factor):
+        json = {
+            "id": factor.pk,
+            "title": factor.title,
+            "description": factor.description,
+            "template_id": factor.template_id,
+        }
+        return json
+
+
 class Card(models.Model):
     AGENT_CHOICES = (
         ('mother', "Мать"),
@@ -1032,7 +1063,8 @@ class Card(models.Model):
     work_place = models.CharField(max_length=128, blank=True, default='', help_text="Место работы")
     work_place_db = models.ForeignKey('contracts.Company', blank=True, null=True, default=None, on_delete=models.SET_NULL, help_text="Место работы из базы")
     work_position = models.CharField(max_length=128, blank=True, default='', help_text="Должность")
-    work_department = models.CharField(max_length=128, blank=True, default='', help_text="Подразделение")
+    work_department = models.CharField(max_length=128, blank=True, default='', help_text="Подразделение")  # DEPRECATED
+    work_department_db = models.ForeignKey('contracts.CompanyDepartment', blank=True, null=True, default=None, on_delete=models.SET_NULL, help_text="Место отдела из базы")
     mother = models.ForeignKey('self', related_name='mother_p', help_text="Мать", blank=True, null=True, default=None, on_delete=models.SET_NULL)
     father = models.ForeignKey('self', related_name='father_p', help_text="Отец", blank=True, null=True, default=None, on_delete=models.SET_NULL)
     curator = models.ForeignKey('self', related_name='curator_p', help_text="Опекун", blank=True, null=True, default=None, on_delete=models.SET_NULL)
@@ -1225,6 +1257,7 @@ class Card(models.Model):
         # document= "полис ОМС"
         ind_data['oms'] = {}
         ind_data['oms']['polis_num'] = ind_documents["polis"]["num"]
+        ind_data['oms']['number'] = ind_documents["polis"]["num"]
         ind_data['enp'] = ind_documents["polis"]["num"]
         if not ind_data['oms']['polis_num']:
             ind_data['oms']['polis_num'] = None if empty else '___________________________'
@@ -1233,6 +1266,9 @@ class Card(models.Model):
             ind_data['oms']['polis_serial'] = None if empty else '________'
         # ind_data['oms']['polis_date_start'] = ind_documents["polis"]["date_start"]
         ind_data['oms']['polis_issued'] = (None if empty else '') if not ind_documents["polis"]["issued"] else ind_documents["polis"]["issued"]
+        ind_data['oms']['issueOrgName'] = (None if empty else '') if not ind_documents["polis"]["issued"] else ind_documents["polis"]["issued"]
+        ind_data['insurer_full_code'] = '' if not ind_documents["polis"]["insurer_full_code"] else ind_documents["polis"]["insurer_full_code"]
+        ind_data['oms']['issueOrgCode'] = ind_data['insurer_full_code']
         ind_data['ecp_id'] = self.individual.ecp_id
 
         return ind_data
@@ -1438,6 +1474,31 @@ class DispensaryReg(models.Model):
     class Meta:
         verbose_name = 'Д-учет'
         verbose_name_plural = 'Д-учет'
+
+
+class PatientHarmfullFactor(models.Model):
+    card = models.ForeignKey(Card, help_text="Карта", db_index=True, on_delete=models.CASCADE)
+    harmful_factor = models.ForeignKey(HarmfulFactor, default=None, blank=True, null=True, db_index=True, help_text='Фактор вредности', on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = 'Фактор вредности у пациента'
+        verbose_name_plural = 'Факторы вредности пациентов'
+
+    @staticmethod
+    def get_card_harmful_factor(card):
+        patient_harmful_factors = PatientHarmfullFactor.objects.filter(card=card)
+        return [{"factorId": p.harmful_factor.pk} for p in patient_harmful_factors]
+
+    @staticmethod
+    def save_card_harmful_factor(card_pk, tb_data):
+        card = Card.objects.filter(pk=card_pk).first()
+        PatientHarmfullFactor.objects.filter(card=card).delete()
+        for t_b in tb_data:
+            harmfull = HarmfulFactor.objects.filter(pk=t_b['factorId']).first()
+            if harmfull:
+                PatientHarmfullFactor(card=card, harmful_factor=harmfull).save()
+
+        return True
 
 
 class AdditionalPatientDispensaryPlan(models.Model):

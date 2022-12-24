@@ -381,7 +381,6 @@ def custom_statistics_research(research_id, d_s, d_e, filter_hospital_id):
                   directions_issledovaniya.research_id=%(research_id)s
                   and directory_paraclinicinputfield.for_talon = true
                   and directions_issledovaniya.time_confirmation IS NOT NULL
-                  and directions_napravleniya.parent_id IS NULL
                 AND
                 CASE WHEN %(filter_hospital_id)s > 0 THEN
                   directions_napravleniya.hospital_id = %(filter_hospital_id)s
@@ -689,7 +688,8 @@ def statistics_consolidate_research(d_s, d_e, fin_source_pk):
                     date_part('year', age(directions_issledovaniya.time_confirmation AT TIME ZONE %(tz)s, ci.birthday))::int as patient_age,
                     directions_issledovaniya.parent_id as parent_iss,
                     directions_issledovaniya.id as id_iss,
-                    directions_napravleniya.purpose
+                    directions_napravleniya.purpose,
+                    contracts_pricecategory.title as category_title
                 FROM public.directions_issledovaniya
                 LEFT JOIN directory_researches
                 ON directory_researches.id = directions_issledovaniya.research_id
@@ -703,6 +703,8 @@ def statistics_consolidate_research(d_s, d_e, fin_source_pk):
                 ON directions_napravleniya.client_id = cc.id
                 LEFT JOIN clients_individual ci 
                 ON ci.id = cc.individual_id
+                LEFT JOIN contracts_pricecategory
+                ON contracts_pricecategory.id = directions_issledovaniya.price_category_id
                 where time_confirmation AT TIME ZONE %(tz)s BETWEEN %(d_start)s AND %(d_end)s AND (
                             directions_issledovaniya.fin_source_id=%(fin_source_pk)s or 
                             directions_napravleniya.istochnik_f_id=%(fin_source_pk)s or 
